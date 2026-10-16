@@ -12,5 +12,12 @@ services:
       - .:/rails
     environment:
       - RATE_API_URL=http://rate-api:8080
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
       - rate-api
+      - redis
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"

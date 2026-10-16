@@ -29,6 +29,11 @@ gem "bootsnap", require: false
 # HTTP client for external API call
 gem 'httparty'
 
+# Shared rate cache, refresh lock and cooldown across threads and processes
+gem "redis", "~> 5.3"
+# Thread-safe pool of Redis connections (Puma runs several threads)
+gem "connection_pool", "~> 2.4"
+
 # Use Rack CORS for handling Cross-Origin Resource Sharing (CORS), making cross-origin Ajax possible
 # gem "rack-cors"
 
