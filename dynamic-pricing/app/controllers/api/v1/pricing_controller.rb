@@ -1,4 +1,6 @@
 class Api::V1::PricingController < ApplicationController
+  # Declared first so it wraps validate_params too: 400s get a log line as well.
+  around_action :log_request
   before_action :validate_params
 
   # All are 503: the request was fine, we just cannot serve a fresh rate right now.
@@ -14,18 +16,32 @@ class Api::V1::PricingController < ApplicationController
     hotel  = params[:hotel]
     room   = params[:room]
 
-    service = Api::V1::PricingService.new(period:, hotel:, room:)
-    service.run
-    if service.valid?
-      render json: { rate: service.result }
+    @service = Api::V1::PricingService.new(period:, hotel:, room:)
+    @service.run
+    if @service.valid?
+      render json: { rate: @service.result }
     else
-      render_failure(service.failure)
+      render_failure(@service.failure)
     end
   end
 
   private
 
+  # One JSON line per request: what we answered, how old the rate was, how long it took.
+  def log_request
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    yield
+    Rails.logger.info({
+      event: "pricing_request",
+      status: response.status,
+      code: @error_code,
+      rate_age_ms: @service&.rate_age_ms,
+      latency_ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round
+    }.to_json)
+  end
+
   def render_failure(failure)
+    @error_code = failure.code
     response.headers["Retry-After"] = failure.retry_after.to_s
     render json: { error: FAILURE_MESSAGES.fetch(failure.code), code: failure.code },
            status: :service_unavailable
@@ -53,6 +69,7 @@ class Api::V1::PricingController < ApplicationController
 
   # Same shape as render_failure, so clients can always switch on "code".
   def render_invalid_params(message)
+    @error_code = :invalid_params
     render json: { error: message, code: :invalid_params }, status: :bad_request
   end
 end

@@ -17,7 +17,8 @@ module Api::V1
     # code: :rates_unavailable, :upstream_quota_exhausted or :cache_unavailable
     Failure = Data.define(:code, :retry_after)
 
-    attr_reader :failure
+    # rate_age_ms: age of the table the rate came from (for logs); nil on failure
+    attr_reader :failure, :rate_age_ms
 
     # The controller owns the user-facing message, so errors stays empty;
     # failure is the single source of truth.
@@ -99,6 +100,7 @@ module Api::V1
         return fail_with(code, @cache.cooldown_remaining || DEFAULT_RETRY_AFTER)
       end
 
+      @rate_age_ms = (table.age * 1000).round
       @result = rate
     end
 

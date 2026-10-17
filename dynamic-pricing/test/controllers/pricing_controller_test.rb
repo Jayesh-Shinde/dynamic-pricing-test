@@ -149,4 +149,59 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
     assert_includes json_response["error"], "Invalid room"
     assert_equal "invalid_params", json_response["code"]
   end
+
+  VALID_PARAMS = { period: "Summer", hotel: "FloatingPointResort", room: "SingletonRoom" }.freeze
+
+  test "logs one pricing_request line for a served rate" do
+    rates = { RateCache.key_for("Summer", "FloatingPointResort", "SingletonRoom") => 15000 }
+    ok = RateApiClient::Result.new(kind: :ok, rates:, http_status: 200)
+
+    logs = capture_request_logs do
+      RateApiClient.stub(:fetch_rates, ok) { get api_v1_pricing_url, params: VALID_PARAMS }
+    end
+
+    assert_equal 1, logs.size
+    assert_equal 200, logs[0]["status"]
+    assert_nil logs[0]["code"]
+    assert_kind_of Integer, logs[0]["rate_age_ms"]
+    assert_kind_of Integer, logs[0]["latency_ms"]
+  end
+
+  test "logs the error code for a 503" do
+    failed = RateApiClient::Result.new(kind: :http_error, rates: nil, http_status: 500)
+
+    logs = capture_request_logs do
+      RateApiClient.stub(:fetch_rates, failed) { get api_v1_pricing_url, params: VALID_PARAMS }
+    end
+
+    assert_equal 1, logs.size
+    assert_equal 503, logs[0]["status"]
+    assert_equal "rates_unavailable", logs[0]["code"]
+    assert_nil logs[0]["rate_age_ms"]
+  end
+
+  test "logs invalid params too, although validate_params stops the request" do
+    logs = capture_request_logs do
+      get api_v1_pricing_url, params: VALID_PARAMS.merge(room: "InvalidRoom")
+    end
+
+    assert_equal 1, logs.size
+    assert_equal 400, logs[0]["status"]
+    assert_equal "invalid_params", logs[0]["code"]
+  end
+
+  private
+
+  # Returns the parsed "pricing_request" log entries written during the block.
+  def capture_request_logs
+    io = StringIO.new
+    original = Rails.logger
+    Rails.logger = ActiveSupport::Logger.new(io)
+    yield
+    io.string.lines
+      .filter_map { |line| JSON.parse(line) rescue nil }
+      .select { |entry| entry["event"] == "pricing_request" }
+  ensure
+    Rails.logger = original
+  end
 end
