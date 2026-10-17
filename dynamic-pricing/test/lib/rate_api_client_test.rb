@@ -57,4 +57,51 @@ class RateApiClientTest < ActiveSupport::TestCase
     assert_equal :error_body, RateApiClient.parse_rates("[1, 2]", [SUMMER]).kind
     assert_equal :invalid_rates, RateApiClient.parse_rates({ rates: ["x"] }.to_json, [SUMMER]).kind
   end
+
+  # --- fetch_rates: HTTP is stubbed by replacing RateApiClient.post ---
+
+  FakeResponse = Struct.new(:code, :body)
+
+  test "fetch_rates sends all attributes in one call and parses a 200" do
+    sent = nil
+    respond = ->(path, body:) { sent = [path, JSON.parse(body)]; FakeResponse.new(200, body_with_rates(56900, "35900")) }
+
+    result = RateApiClient.stub(:post, respond) { RateApiClient.fetch_rates([SUMMER, WINTER]) }
+
+    assert_equal ["/pricing", { "attributes" => [SUMMER, WINTER].map(&:stringify_keys) }], sent
+    assert result.ok?
+    assert_equal 35900, result.rates["Winter|GitawayHotel|BooleanTwin"]
+  end
+
+  test "fetch_rates maps upstream HTTP errors to failure kinds" do
+    { 429 => :quota_exceeded, 400 => :bad_request, 500 => :http_error, 503 => :http_error }.each do |code, kind|
+      result = RateApiClient.stub(:post, FakeResponse.new(code, { error: "x" }.to_json)) do
+        RateApiClient.fetch_rates([SUMMER])
+      end
+
+      assert_equal kind, result.kind, "HTTP #{code}"
+      assert_equal code, result.http_status
+      assert_nil result.rates
+    end
+  end
+
+  test "fetch_rates turns timeouts and network errors into failures instead of raising" do
+    {
+      Net::OpenTimeout => :timeout,
+      Net::ReadTimeout => :timeout,
+      SocketError => :connection_error,
+      Errno::ECONNREFUSED => :connection_error,
+      Errno::ECONNRESET => :connection_error,
+      EOFError => :connection_error
+    }.each do |error_class, kind|
+      result = RateApiClient.stub(:post, proc { raise error_class }) { RateApiClient.fetch_rates([SUMMER]) }
+
+      assert_equal kind, result.kind, error_class.name
+    end
+  end
+
+  test "open and read timeouts are 3 seconds" do
+    assert_equal 3.0, RateApiClient.default_options[:open_timeout]
+    assert_equal 3.0, RateApiClient.default_options[:read_timeout]
+  end
 end

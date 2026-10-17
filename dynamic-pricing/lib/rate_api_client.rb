@@ -4,6 +4,12 @@ class RateApiClient
   headers "Content-Type" => "application/json"
   headers 'token' => ENV.fetch('RATE_API_TOKEN', '04aa6f42aa03f220c2ae9a276cd68c62')
 
+  # Good calls take under 0.05 s. The slow ones take ~120 s and are charged
+  # anyway, so give up fast instead of holding a Puma thread for a minute.
+  TIMEOUT_SECONDS = ENV.fetch("RATE_API_TIMEOUT_SECONDS", 3).to_f
+  open_timeout TIMEOUT_SECONDS
+  read_timeout TIMEOUT_SECONDS
+
   def self.get_rate(period:, hotel:, room:)
     params = {
       attributes: [
@@ -22,6 +28,23 @@ class RateApiClient
     def ok?
       kind == :ok
     end
+  end
+
+  # One call for any number of keys: it costs one quota unit either way.
+  # Never raises for network or upstream problems; always returns a Result.
+  def self.fetch_rates(attributes)
+    response = post("/pricing", body: { attributes: }.to_json)
+
+    case response.code
+    when 200 then parse_rates(response.body, attributes)
+    when 429 then failure(:quota_exceeded, 429)
+    when 400 then failure(:bad_request, 400) # our request was wrong, not the user's
+    else failure(:http_error, response.code)
+    end
+  rescue Timeout::Error # Net::OpenTimeout and Net::ReadTimeout are both Timeout::Errors
+    failure(:timeout)
+  rescue SocketError, SystemCallError, IOError, HTTParty::Error # DNS, refused, reset, ...
+    failure(:connection_error)
   end
 
   # Turns a 200 body into { "Summer|FloatingPointResort|SingletonRoom" => 56900, ... }
