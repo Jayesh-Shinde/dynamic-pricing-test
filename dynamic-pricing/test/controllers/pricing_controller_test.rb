@@ -2,15 +2,10 @@ require "test_helper"
 
 class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
   test "should get pricing with all parameters" do
-    mock_body = {
-      'rates' => [
-        { 'period' => 'Summer', 'hotel' => 'FloatingPointResort', 'room' => 'SingletonRoom', 'rate' => '15000' }
-      ]
-    }.to_json
+    rates = { RateCache.key_for("Summer", "FloatingPointResort", "SingletonRoom") => 15000 }
+    mock_result = RateApiClient::Result.new(kind: :ok, rates:, http_status: 200)
 
-    mock_response = OpenStruct.new(success?: true, body: mock_body)
-
-    RateApiClient.stub(:get_rate, mock_response) do
+    RateApiClient.stub(:fetch_rates, mock_result) do
       get api_v1_pricing_url, params: {
         period: "Summer",
         hotel: "FloatingPointResort",
@@ -21,14 +16,14 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
       assert_equal "application/json", @response.media_type
 
       json_response = JSON.parse(@response.body)
-      assert_equal "15000", json_response["rate"]
+      assert_equal 15000, json_response["rate"] # always an integer, even if upstream sent "15000"
     end
   end
 
   test "should return error when rate API fails" do
-    mock_response = OpenStruct.new(success?: false, body: { 'error' => 'Rate not found' })
+    mock_result = RateApiClient::Result.new(kind: :http_error, rates: nil, http_status: 500)
 
-    RateApiClient.stub(:get_rate, mock_response) do
+    RateApiClient.stub(:fetch_rates, mock_result) do
       get api_v1_pricing_url, params: {
         period: "Summer",
         hotel: "FloatingPointResort",
@@ -39,7 +34,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
       assert_equal "application/json", @response.media_type
 
       json_response = JSON.parse(@response.body)
-      assert_includes json_response["error"], "Rate not found"
+      assert_includes json_response["error"], "temporarily unavailable"
     end
   end
 

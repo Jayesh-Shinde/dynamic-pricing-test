@@ -10,19 +10,6 @@ class RateApiClient
   open_timeout TIMEOUT_SECONDS
   read_timeout TIMEOUT_SECONDS
 
-  def self.get_rate(period:, hotel:, room:)
-    params = {
-      attributes: [
-        {
-          period: period,
-          hotel: hotel,
-          room: room
-        }
-      ]
-    }.to_json
-    self.post("/pricing", body: params)
-  end
-
   # kind is :ok, or the reason the call failed. rates is only set when :ok.
   Result = Data.define(:kind, :rates, :http_status) do
     def ok?

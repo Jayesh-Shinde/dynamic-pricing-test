@@ -52,10 +52,16 @@ class RateCache
     end
 
     table = Table.new(rates: data["rates"], fetched_at: data["fetched_at"])
-    table.age <= @max_age ? table : nil
+    servable?(table) ? table : nil
   rescue JSON::ParserError
     Rails.logger.warn({ event: "rate_cache.corrupt_entry" }.to_json)
     nil
+  end
+
+  # True while the table is young enough to show a user. Callers check again
+  # right before serving, because time passes between read and render.
+  def servable?(table)
+    !table.nil? && table.age <= @max_age
   end
 
   # fetched_at: epoch seconds taken just before the upstream request was sent.
@@ -117,5 +123,10 @@ class RateCache
   def cooldown_remaining
     ms = @pool.with { |redis| redis.pttl(COOLDOWN_KEY) }
     ms.positive? ? (ms / 1000.0).ceil : nil
+  end
+
+  # "quota" or "failure" while a cooldown is running, nil otherwise.
+  def cooldown_reason
+    @pool.with { |redis| redis.get(COOLDOWN_KEY) }
   end
 end
