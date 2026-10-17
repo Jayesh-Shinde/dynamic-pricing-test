@@ -1,6 +1,14 @@
 class Api::V1::PricingController < ApplicationController
   before_action :validate_params
 
+  # All are 503: the request was fine, we just cannot serve a fresh rate right now.
+  # (Not 429 for quota: the user did not exceed anything, our upstream token did.)
+  FAILURE_MESSAGES = {
+    rates_unavailable: "Fresh rates are temporarily unavailable. Please retry shortly.",
+    upstream_quota_exhausted: "The rate provider's daily limit has been reached. Please retry later.",
+    cache_unavailable: "The rate service is temporarily unavailable. Please retry shortly."
+  }.freeze
+
   def index
     period = params[:period]
     hotel  = params[:hotel]
@@ -11,29 +19,40 @@ class Api::V1::PricingController < ApplicationController
     if service.valid?
       render json: { rate: service.result }
     else
-      render json: { error: service.errors.join(', ') }, status: :bad_request
+      render_failure(service.failure)
     end
   end
 
   private
 
+  def render_failure(failure)
+    response.headers["Retry-After"] = failure.retry_after.to_s
+    render json: { error: FAILURE_MESSAGES.fetch(failure.code), code: failure.code },
+           status: :service_unavailable
+  end
+
   def validate_params
     # Validate required parameters
     unless params[:period].present? && params[:hotel].present? && params[:room].present?
-      return render json: { error: "Missing required parameters: period, hotel, room" }, status: :bad_request
+      return render_invalid_params("Missing required parameters: period, hotel, room")
     end
 
     # Validate parameter values
     unless RateCatalog::PERIODS.include?(params[:period])
-      return render json: { error: "Invalid period. Must be one of: #{RateCatalog::PERIODS.join(', ')}" }, status: :bad_request
+      return render_invalid_params("Invalid period. Must be one of: #{RateCatalog::PERIODS.join(', ')}")
     end
 
     unless RateCatalog::HOTELS.include?(params[:hotel])
-      return render json: { error: "Invalid hotel. Must be one of: #{RateCatalog::HOTELS.join(', ')}" }, status: :bad_request
+      return render_invalid_params("Invalid hotel. Must be one of: #{RateCatalog::HOTELS.join(', ')}")
     end
 
     unless RateCatalog::ROOMS.include?(params[:room])
-      return render json: { error: "Invalid room. Must be one of: #{RateCatalog::ROOMS.join(', ')}" }, status: :bad_request
+      return render_invalid_params("Invalid room. Must be one of: #{RateCatalog::ROOMS.join(', ')}")
     end
+  end
+
+  # Same shape as render_failure, so clients can always switch on "code".
+  def render_invalid_params(message)
+    render json: { error: message, code: :invalid_params }, status: :bad_request
   end
 end

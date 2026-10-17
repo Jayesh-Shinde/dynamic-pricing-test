@@ -120,6 +120,14 @@ class RateCacheTest < ActiveSupport::TestCase
     assert_equal 5, @cache.record_failure
   end
 
+  test "a success ends a running cooldown" do
+    @cache.record_failure
+    @cache.record_success
+
+    assert_nil @cache.cooldown_remaining
+    assert_nil @cache.cooldown_reason
+  end
+
   test "the failure counter expires by itself" do
     @cache.record_failure
 

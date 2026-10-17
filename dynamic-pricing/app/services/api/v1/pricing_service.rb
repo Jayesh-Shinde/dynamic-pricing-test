@@ -19,6 +19,12 @@ module Api::V1
 
     attr_reader :failure
 
+    # The controller owns the user-facing message, so errors stays empty;
+    # failure is the single source of truth.
+    def valid?
+      failure.nil?
+    end
+
     def initialize(period:, hotel:, room:, cache: RateCache.new, poll_deadline: POLL_DEADLINE)
       @period = period
       @hotel = hotel
@@ -65,6 +71,7 @@ module Api::V1
       case outcome.status
       when :refreshed then outcome.table
       when :busy then wait_for_winner
+      when :failed then nil
       end
     end
 
@@ -98,8 +105,6 @@ module Api::V1
     # Sets failure. code: one of the Failure codes; retry_after: whole seconds
     def fail_with(code, retry_after)
       @failure = Failure.new(code:, retry_after:)
-      # Until the controller renders failures itself (chunk 11).
-      errors << "Fresh rates are temporarily unavailable. Please retry shortly."
     end
   end
 end

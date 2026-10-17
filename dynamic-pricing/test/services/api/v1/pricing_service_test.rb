@@ -85,6 +85,13 @@ class Api::V1::PricingServiceTest < ActiveSupport::TestCase
     assert_equal 5, svc.failure.retry_after # first failure: 5 s cooldown
   end
 
+  test "an empty cache with an upstream 429 returns upstream_quota_exhausted with a 1 hour retry" do
+    svc = run_with_upstream(upstream_failed(:quota_exceeded))
+
+    assert_equal :upstream_quota_exhausted, svc.failure.code
+    assert_equal 1.hour.to_i, svc.failure.retry_after
+  end
+
   test "an empty cache during a quota cooldown returns upstream_quota_exhausted without calling upstream" do
     @cache.start_quota_cooldown
 

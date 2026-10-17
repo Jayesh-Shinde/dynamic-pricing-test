@@ -108,8 +108,9 @@ class RateCache
     cooldown
   end
 
+  # Upstream just answered, so any running cooldown (failure or quota) is out of date.
   def record_success
-    @pool.with { |redis| redis.del(FAILURES_KEY) }
+    @pool.with { |redis| redis.del(FAILURES_KEY, COOLDOWN_KEY) }
   end
 
   # Upstream said 429: our daily quota is spent. Its reset time is unknown,
