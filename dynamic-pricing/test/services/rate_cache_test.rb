@@ -60,4 +60,37 @@ class RateCacheTest < ActiveSupport::TestCase
       assert_nil @cache.read, "expected nil for #{raw.inspect}"
     end
   end
+
+  test "only one caller gets the lock at a time" do
+    token = @cache.acquire_lock
+
+    assert_not_nil token
+    assert_nil @cache.acquire_lock
+  end
+
+  test "the lock can be taken again after its owner releases it" do
+    token = @cache.acquire_lock
+
+    assert @cache.release_lock(token)
+    assert_not_nil @cache.acquire_lock
+  end
+
+  # A slow holder whose lock expired must not delete the new holder's lock.
+  test "releasing with the wrong token keeps the lock" do
+    @cache.acquire_lock
+
+    assert_not @cache.release_lock("someone-elses-token")
+    assert_nil @cache.acquire_lock
+  end
+
+  # Real wait, because the expiry lives in Redis and travel_to cannot move Redis's clock.
+  test "the lock expires by itself" do
+    old_token = @cache.acquire_lock(ttl: 0.1.seconds)
+    sleep 0.15
+
+    new_token = @cache.acquire_lock
+    assert_not_nil new_token
+    assert_not @cache.release_lock(old_token)
+    assert_nil @cache.acquire_lock, "the old holder must not have released the new lock"
+  end
 end
