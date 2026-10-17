@@ -93,4 +93,43 @@ class RateCacheTest < ActiveSupport::TestCase
     assert_not @cache.release_lock(old_token)
     assert_nil @cache.acquire_lock, "the old holder must not have released the new lock"
   end
+
+  test "there is no cooldown at the start" do
+    assert_nil @cache.cooldown_remaining
+  end
+
+  test "each consecutive failure lengthens the cooldown by 5 seconds" do
+    assert_equal 5, @cache.record_failure
+    assert_equal 5, @cache.cooldown_remaining
+
+    assert_equal 10, @cache.record_failure
+    assert_equal 10, @cache.cooldown_remaining
+  end
+
+  test "the cooldown is capped at 2 minutes" do
+    30.times { @cache.record_failure }
+
+    assert_equal 120, @cache.record_failure
+    assert_equal 120, @cache.cooldown_remaining
+  end
+
+  test "a success resets the failure count" do
+    3.times { @cache.record_failure }
+    @cache.record_success
+
+    assert_equal 5, @cache.record_failure
+  end
+
+  test "the failure counter expires by itself" do
+    @cache.record_failure
+
+    ttl = REDIS_POOL.with { |redis| redis.ttl(RateCache::FAILURES_KEY) }
+    assert_in_delta 600, ttl, 1
+  end
+
+  test "an upstream 429 starts a 1 hour cooldown" do
+    @cache.start_quota_cooldown
+
+    assert_equal 3600, @cache.cooldown_remaining
+  end
 end

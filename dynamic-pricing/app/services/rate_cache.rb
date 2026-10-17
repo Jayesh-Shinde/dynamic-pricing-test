@@ -7,6 +7,8 @@
 class RateCache
   TABLE_KEY = "rates:table"
   LOCK_KEY = "rates:refresh_lock"
+  FAILURES_KEY = "rates:consecutive_failures"
+  COOLDOWN_KEY = "rates:refresh_cooldown"
 
   # Deletes the lock only if it still holds our token. Runs inside Redis as one
   # step, so nothing can change the key between the check and the delete.
@@ -80,5 +82,40 @@ class RateCache
   # expired (and maybe been taken by someone else), so we never delete theirs.
   def release_lock(token)
     @pool.with { |redis| redis.eval(RELEASE_LOCK_SCRIPT, keys: [LOCK_KEY], argv: [token]) } == 1
+  end
+
+  # After a failed refresh, nobody tries again for a while: step x consecutive
+  # failures, capped. Each refresh costs quota whether it works or not, so this
+  # keeps a full-day outage under the daily limit. The counter expires by
+  # itself, so a stale count from long ago cannot cause a long cooldown.
+  # Returns the cooldown length in seconds.
+  def record_failure(step: 5.seconds, cap: 2.minutes, counter_ttl: 10.minutes)
+    failures, _ = @pool.with do |redis|
+      redis.multi do |tx|
+        tx.incr(FAILURES_KEY)
+        tx.expire(FAILURES_KEY, counter_ttl.to_i)
+      end
+    end
+
+    cooldown = [step.to_i * failures, cap.to_i].min
+    @pool.with { |redis| redis.set(COOLDOWN_KEY, "failure", ex: cooldown) }
+    cooldown
+  end
+
+  def record_success
+    @pool.with { |redis| redis.del(FAILURES_KEY) }
+  end
+
+  # Upstream said 429: our daily quota is spent. Its reset time is unknown,
+  # so stop calling for a long, fixed time.
+  def start_quota_cooldown(duration: 1.hour)
+    @pool.with { |redis| redis.set(COOLDOWN_KEY, "quota", ex: duration.to_i) }
+  end
+
+  # Whole seconds left in the current cooldown (rounded up, for Retry-After),
+  # or nil if there is none.
+  def cooldown_remaining
+    ms = @pool.with { |redis| redis.pttl(COOLDOWN_KEY) }
+    ms.positive? ? (ms / 1000.0).ceil : nil
   end
 end
