@@ -1,8 +1,4 @@
 class Api::V1::PricingController < ApplicationController
-  VALID_PERIODS = %w[Summer Autumn Winter Spring].freeze
-  VALID_HOTELS = %w[FloatingPointResort GitawayHotel RecursionRetreat].freeze
-  VALID_ROOMS = %w[SingletonRoom BooleanTwin RestfulKing].freeze
-
   before_action :validate_params
 
   def index
@@ -28,16 +24,16 @@ class Api::V1::PricingController < ApplicationController
     end
 
     # Validate parameter values
-    unless VALID_PERIODS.include?(params[:period])
-      return render json: { error: "Invalid period. Must be one of: #{VALID_PERIODS.join(', ')}" }, status: :bad_request
+    unless RateCatalog::PERIODS.include?(params[:period])
+      return render json: { error: "Invalid period. Must be one of: #{RateCatalog::PERIODS.join(', ')}" }, status: :bad_request
     end
 
-    unless VALID_HOTELS.include?(params[:hotel])
-      return render json: { error: "Invalid hotel. Must be one of: #{VALID_HOTELS.join(', ')}" }, status: :bad_request
+    unless RateCatalog::HOTELS.include?(params[:hotel])
+      return render json: { error: "Invalid hotel. Must be one of: #{RateCatalog::HOTELS.join(', ')}" }, status: :bad_request
     end
 
-    unless VALID_ROOMS.include?(params[:room])
-      return render json: { error: "Invalid room. Must be one of: #{VALID_ROOMS.join(', ')}" }, status: :bad_request
+    unless RateCatalog::ROOMS.include?(params[:room])
+      return render json: { error: "Invalid room. Must be one of: #{RateCatalog::ROOMS.join(', ')}" }, status: :bad_request
     end
   end
 end
