@@ -123,6 +123,37 @@ class Api::V1::PricingServiceTest < ActiveSupport::TestCase
     assert_equal 5, svc.failure.retry_after # default: there is no cooldown to report
   end
 
+  # --- concurrency important ---
+
+  test "many requests at an empty cache make exactly one upstream call" do
+    threads = 10
+    calls = Queue.new # thread-safe; counts upstream calls
+    slow_upstream = lambda do |_attributes|
+      calls << 1
+      sleep 0.3 # long enough that every other thread arrives while the winner is still fetching
+      upstream_ok(500)
+    end
+
+    gate = Queue.new # each thread blocks on pop until we open the gate, so they start together
+    results = Queue.new
+
+    RateApiClient.stub(:fetch_rates, slow_upstream) do
+      workers = Array.new(threads) do
+        Thread.new do
+          gate.pop
+          svc = service
+          svc.run
+          results << svc.result
+        end
+      end
+      threads.times { gate << :go }
+      workers.each(&:join)
+    end
+
+    assert_equal 1, calls.size
+    assert_equal [500] * threads, Array.new(threads) { results.pop }
+  end
+
   # --- serve-time age check ---
 
   test "a 4m58s cache is not served at 5m01s after a slow failed refresh" do
