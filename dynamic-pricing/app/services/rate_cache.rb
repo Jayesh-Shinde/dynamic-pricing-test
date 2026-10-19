@@ -77,8 +77,9 @@ class RateCache
 
   # Tries to become the one process allowed to refresh. Returns a token if we
   # got the lock, nil if someone else holds it. The lock expires by itself
-  # after ttl, so a crashed holder cannot block refreshes forever.
-  def acquire_lock(ttl: 5.seconds)
+  # after ttl, so a crashed holder cannot block refreshes forever. The default
+  # is above the worst-case refresh (3 s to connect + 3 s to read).
+  def acquire_lock(ttl: 10.seconds)
     token = SecureRandom.hex(16)
     acquired = @pool.with { |redis| redis.set(LOCK_KEY, token, nx: true, px: (ttl.to_f * 1000).to_i) }
     acquired ? token : nil
