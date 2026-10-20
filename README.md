@@ -186,11 +186,10 @@ Codes: `invalid_params` (400), `rates_unavailable`, `upstream_quota_exhausted`, 
 - One `rate_refresh` JSON line per upstream attempt: `outcome`, `http_status`, `latency_ms`. Counting these lines gives the quota usage.
 - One `pricing_request` JSON line per user request.
 
-
 ## Section 4: Failure behaviour
 
 - If the cached table is still ≤ 5 min old, it is served and the user never sees the failure. Failed responses are never cached.
-- After cache is expired every 503 has a `Retry-After` header: the cooldown time left, or 5s.
+- Every 503 has a `Retry-After` header: the cooldown time left, or 5s.
 - Upstream slow (> 3 s), down, 5xx, error body, bad/null rates -> 503 `rates_unavailable`, cooldown 5 s × failures (cap 2 min)
 - Upstream 429 -> 503 `upstream_quota_exhausted`, cooldown 1 h
 - Upstream 400 (a bug on our side) -> 503 `rates_unavailable`, logged at error level
@@ -199,25 +198,55 @@ Codes: `invalid_params` (400), `rates_unavailable`, `upstream_quota_exhausted`, 
 
 ## Section 5: Assumptions
 
-- When the 5 minutes start: from just before the upstream call is sent (fetched_at), not from when the response arrives, so ex: it took 2s to fetch response then ttl would be 4m58s.
-- Stale vs error: when nothing ≤ 5 min old is available, the user gets a 503, never an older rate. The requirement says no older than 5 minutes.
-- Rate type: upstream sometimes sends a number and sometimes a numeric string. Our API always returns an integer as consistant type. Anything else like null, decimal, negative, text makes the whole response invalid.
-- Fixed catalog: the 36 combinations are fixed, which is what makes a full table refresh in one call possible. If the catalog grew large, this design would need to change.
-- Traffic shape: 10000 requests/day is roughly one every 9s, so refreshing on demand gets more chances inside the 3–5 min window.
-- Quota reset window: unknown in production (in dev the container resets on restart). After a 429 I wait 1 h before trying again. This is a guess, set as a default in start_quota_cooldown, not an env setting.
-- Failed calls cost quota: measured during local test. Timeouts, 500s and error bodies were all charged against the 1000. That is why each refresh makes one attempt only.
-- Rates are not stable per key: the same key returns different rates in separate calls. A cached value is one sample from the model, which I took to be acceptable for up to 5 min.
+- **When the 5 minutes start**: from just before the upstream call is sent (`fetched_at`), not from when the response arrives, so ex: it took 2s to fetch response then ttl would be 4m58s.
+- **Stale vs error**: when nothing ≤ 5 min old is available, the user gets a 503, never an older rate. The requirement says no older than 5 minutes.
+- **Rate type**: upstream sometimes sends a number and sometimes a numeric string. Our API always returns an integer as consistent type. Anything else like null, decimal, negative, text makes the whole response invalid.
+- **Fixed catalog**: the 36 combinations are fixed, which is what makes a full table refresh in one call possible. If the catalog grew large, this design would need to change.
+- **Traffic shape**: 10000 requests/day is roughly one every 9s, so refreshing on demand gets more chances inside the 3–5 min window.
+- **Quota reset window**: unknown in production (in dev the container resets on restart). After a 429 I wait 1 h before trying again. This is a guess, set as a default in `start_quota_cooldown`, not an env setting.
+- **Failed calls cost quota**: measured during local test. Timeouts, 500s and error bodies were all charged against the 1000. That is why each refresh makes one attempt only.
+- **Rates are not stable per key**: the same key returns different rates in separate calls. A cached value is one sample from the model, which I took to be acceptable for up to 5 min.
 
 ## Section 6: Known weaknesses and next steps
 
 - Redis is a single point of failure. If it's down we fail closed and every request gets a 503.
-Next: in production, Redis with a replica and automatic failover (ex: AWS ElastiCache Multi AZ). Optionally, while Redis is being restored, fall back to an in-memory copy of the last table, served only while it's under 5 min old.
-- The design depends on a small,fixed combinations. A full-table refresh works because there are only 36 keys. With ex:10000+ keys, one batch call wouldn't fit and refreshing everything would waste calls. 
-Next: refresh only recently requested keys in batches or raise the upstream quota; or agree a longer max age with product. 
+
+  Next: in production, Redis with a replica and automatic failover (ex: AWS ElastiCache Multi AZ). Optionally, while Redis is being restored, fall back to an in-memory copy of the last table, served only while it's under 5 min old.
+
+- The design depends on a small, fixed combinations. A full-table refresh works because there are only 36 keys. With ex: 10000+ keys, one batch call wouldn't fit and refreshing everything would waste calls.
+
+  Next: refresh only recently requested keys in batches or raise the upstream quota; or agree a longer max age with product.
+
 - There is no count of upstream calls per day. We only react after upstream sends a 429. The reset window in production is unknown and the 1 h cooldown after a 429 is a guess.
-Next: alert when daily rate_refresh attempts pass about 800 (80%), so someone can act(like ask for limit raise) before the limit. Once the reset window is known a counter stops calls automatically and a configurable cooldown become possible.
-- Waiting requests hold a Puma thread. When the cache is empty, losers sleep and poll Redis for up to 4s, and each one blocks a thread (5 per process). At about one request every 9s this is fine, but a burst at an empty cache could use up all the threads. 
-Next: Next: more Puma threads/processes, or let waiting requests return 503 with a short Retry-After instead of waiting.
-- Logs only, no metrics or alerts. The JSON lines make counting possible, but nothing watches them. 
-Next: metrics for refresh success rate, cache age and 503 rate. Alert on any bad_request (that's our bug), on a 429.
-- The upstream token has a hard-coded fallback. RATE_API_TOKEN falls back to a secret in the code. That was fine for the assignment, but in production it should be read from the parameter store/secret manager. No default.
+
+  Next: alert when daily `rate_refresh` attempts pass about 800 (80%), so someone can act (like ask for limit raise) before the limit. Once the reset window is known a counter stops calls automatically and a configurable cooldown becomes possible.
+
+- Waiting requests hold a Puma thread. When the cache is empty, losers sleep and poll Redis for up to 4s, and each one blocks a thread (5 per process). At about one request every 9s this is fine, but a burst at an empty cache could use up all the threads.
+
+  Next: more Puma threads/processes, or let waiting requests return 503 with a short `Retry-After` instead of waiting.
+
+- Logs only, no metrics or alerts. The JSON lines make counting possible, but nothing watches them.
+
+  Next: metrics for refresh success rate, cache age and 503 rate. Alert on any `bad_request` (our bug), on a 429.
+
+- The upstream token has a hard-coded fallback. `RATE_API_TOKEN` falls back to a secret in the code. That was fine for the assignment, but in production it should be read from the parameter store/secret manager. No default.
+
+## Section 7: AI usage
+
+- Context: I am a Node.js/TypeScript backend developer, new to Ruby.
+- My part:
+  - Upstream experiments two runs of about 1000 calls each and every measured number.
+  - The design and its trade-offs: whole-table refresh, Redis, lock + cooldown, 3/5 min windows, fail closed, 503 instead of stale data.
+  - Reviewing every code chunk before accepting it, and making every commit.
+  - Writing the README used Claude formatted the Markdown and reviewed it for accuracy.
+- Claude Code part:
+  - Wrote the Ruby in small chunks (one method at a time), explained with Node analogies.
+  - Reviewed the design. I accepted 4 changes: serve time age check, real Redis in tests, 200ms polling, integer rates.
+  - Suggested mutation checks (break the code on purpose, confirm a test fails).
+- What I changed or rejected:
+  - Dropped the daily upstream-call counter: without the reset window it does not help.
+  - Flat error shape instead of nested, so the scaffold tests and existing clients keep working.
+  - Kept param validation in the controller instead of moving it into the service.
+  - Rejected a 50-call quota reserve in favour of an alert at 80%. left out a database fallback (correlated outages).
+  - Spotted the lock TTL fix.
+- Workflow: I designed and refined the solution -> Claude Code wrote the code chunk by chunk -> I reviewed each chunk through discussion, ran the tests and committed.
