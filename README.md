@@ -133,6 +133,8 @@ After a failed refresh, the cooldown starts at 5 seconds and increases with each
 
 ## Section 3: Design
 
+Diagrams are in [docs/design.md](docs/design.md).
+
 ### Components
 
 Request path: `Controller` -> `PricingService` -> `RateCache` (Redis) -> `RateRefresher` -> `RateApiClient` -> `rate-api`.
@@ -190,7 +192,7 @@ Codes: `invalid_params` (400), `rates_unavailable`, `upstream_quota_exhausted`, 
 
 - If the cached table is still ≤ 5 min old, it is served and the user never sees the failure. Failed responses are never cached.
 - Every 503 has a `Retry-After` header: the cooldown time left, or 5s.
-- Upstream slow (> 3 s), down, 5xx, error body, bad/null rates -> 503 `rates_unavailable`, cooldown 5 s × failures (cap 2 min)
+- Upstream slow (> 3s), down, 5xx, error body, bad/null rates -> 503 `rates_unavailable`, cooldown 5s × failures (cap 2 min)
 - Upstream 429 -> 503 `upstream_quota_exhausted`, cooldown 1 h
 - Upstream 400 (a bug on our side) -> 503 `rates_unavailable`, logged at error level
 - Redis down -> 503 `cache_unavailable`, no upstream call
@@ -235,10 +237,10 @@ Codes: `invalid_params` (400), `rates_unavailable`, `upstream_quota_exhausted`, 
 
 - Context: I am a Node.js/TypeScript backend developer, new to Ruby.
 - My part:
-  - Upstream experiments two runs of about 1000 calls each and every measured number.
+  - Upstream experiments: two runs of about 1000 calls each and every measured number.
   - The design and its trade-offs: whole-table refresh, Redis, lock + cooldown, 3/5 min windows, fail closed, 503 instead of stale data.
   - Reviewing every code chunk before accepting it, and making every commit.
-  - Writing the README used Claude formatted the Markdown and reviewed it for accuracy.
+  - Writing the README myself. Claude formatted the Markdown and reviewed it for accuracy.
 - Claude Code part:
   - Wrote the Ruby in small chunks (one method at a time), explained with Node analogies.
   - Reviewed the design. I accepted 4 changes: serve time age check, real Redis in tests, 200ms polling, integer rates.
@@ -247,6 +249,6 @@ Codes: `invalid_params` (400), `rates_unavailable`, `upstream_quota_exhausted`, 
   - Dropped the daily upstream-call counter: without the reset window it does not help.
   - Flat error shape instead of nested, so the scaffold tests and existing clients keep working.
   - Kept param validation in the controller instead of moving it into the service.
-  - Rejected a 50-call quota reserve in favour of an alert at 80%. left out a database fallback (correlated outages).
+  - Rejected a 50-call quota reserve in favour of an alert at 80%. Left out a database fallback (correlated outages).
   - Spotted the lock TTL fix.
 - Workflow: I designed and refined the solution -> Claude Code wrote the code chunk by chunk -> I reviewed each chunk through discussion, ran the tests and committed.
