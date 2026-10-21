@@ -11,7 +11,7 @@ class RateRefresher
 
   def call
     token = @cache.acquire_lock
-    return Outcome.new(status: :busy, table: nil) unless token
+    return Outcome.new(status: :busy, table: nil) if token.nil?
 
     begin
       fetch_and_store

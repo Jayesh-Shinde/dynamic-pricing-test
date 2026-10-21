@@ -1,10 +1,10 @@
 class Api::V1::PricingController < ApplicationController
-  # Declared first so it wraps validate_params too: 400s get a log line as well.
+  # Declared first so it wraps validate_params too. 400s get a log line as well.
   around_action :log_request
   before_action :validate_params
 
   # All are 503: the request was fine, we just cannot serve a fresh rate right now.
-  # (Not 429 for quota: the user did not exceed anything, our upstream token did.)
+  # Not 429 for quota: the user did not exceed anything. our upstream rate api did.
   FAILURE_MESSAGES = {
     rates_unavailable: "Fresh rates are temporarily unavailable. Please retry shortly.",
     upstream_quota_exhausted: "The rate provider's daily limit has been reached. Please retry later.",
@@ -49,20 +49,20 @@ class Api::V1::PricingController < ApplicationController
 
   def validate_params
     # Validate required parameters
-    unless params[:period].present? && params[:hotel].present? && params[:room].present?
+    if params[:period].blank? || params[:hotel].blank? || params[:room].blank?
       return render_invalid_params("Missing required parameters: period, hotel, room")
     end
 
     # Validate parameter values
-    unless RateCatalog::PERIODS.include?(params[:period])
+    if !RateCatalog::PERIODS.include?(params[:period])
       return render_invalid_params("Invalid period. Must be one of: #{RateCatalog::PERIODS.join(', ')}")
     end
 
-    unless RateCatalog::HOTELS.include?(params[:hotel])
+    if !RateCatalog::HOTELS.include?(params[:hotel])
       return render_invalid_params("Invalid hotel. Must be one of: #{RateCatalog::HOTELS.join(', ')}")
     end
 
-    unless RateCatalog::ROOMS.include?(params[:room])
+    if !RateCatalog::ROOMS.include?(params[:room])
       return render_invalid_params("Invalid room. Must be one of: #{RateCatalog::ROOMS.join(', ')}")
     end
   end

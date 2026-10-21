@@ -42,11 +42,11 @@ class RateApiClient
     data = JSON.parse(body)
     items = data["rates"] if data.is_a?(Hash)
     # e.g. {"message": "Failed to process rates ...", "status": "error"}
-    return failure(:error_body, 200) unless items.is_a?(Array)
+    return failure(:error_body, 200) if !items.is_a?(Array)
 
     rates = {}
     items.each do |item|
-      return failure(:invalid_rates, 200) unless item.is_a?(Hash)
+      return failure(:invalid_rates, 200) if !item.is_a?(Hash)
 
       rate = normalize_rate(item["rate"])
       return failure(:invalid_rates, 200) if rate.nil?
@@ -55,15 +55,19 @@ class RateApiClient
     end
 
     wanted = attributes.map { |a| RateCache.key_for(a[:period], a[:hotel], a[:room]) }
-    return failure(:invalid_rates, 200) unless (wanted - rates.keys).empty?
 
+    # All requested keys must be present, or the whole response is invalid.
+    # Upstream is supposed to return all or nothing, but we cannot trust it.
+    return failure(:invalid_rates, 200) if !(wanted - rates.keys).empty?
+    # slice to only return the requested attributes.
+    # in case upstream adds more in the future by accident.
     Result.new(kind: :ok, rates: rates.slice(*wanted), http_status: 200)
   rescue JSON::ParserError
     failure(:invalid_json, 200)
   end
 
   # Upstream sends the rate as a number or as a numeric string.
-  # Only whole, non-negative values are accepted; we always return an Integer.
+  # Only whole, non-negative values are accepted. we always return an Integer.
   # Anything else (null, decimal, negative, junk) returns nil.
   def self.normalize_rate(value)
     case value

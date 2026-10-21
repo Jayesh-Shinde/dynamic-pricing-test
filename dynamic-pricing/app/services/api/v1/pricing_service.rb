@@ -1,8 +1,8 @@
 module Api::V1
   # Serves one rate from the cached table, refreshing the table when needed.
   #   under 3 min    -> serve the cache
-  #   3 to 5 min     -> serve the cache; one request refreshes it first
-  #   over 5 / empty -> one request refreshes, the others wait for it; error if that fails
+  #   3 to 5 min     -> serve the cache. one request refreshes it first
+  #   over 5 / empty -> one request refreshes. the others wait for it in loop. error if that fails
   # Never serves a rate older than 5 minutes.
   #
   # Output (BaseService pattern): run's return value is not used. Afterwards,
@@ -10,14 +10,14 @@ module Api::V1
   class PricingService < BaseService
     REFRESH_AFTER = 3.minutes
     POLL_INTERVAL = 0.2 # seconds; a good refresh takes ~10 ms
-    POLL_DEADLINE = 4.0 # seconds; the winner's 3 s timeout plus margin
+    POLL_DEADLINE = 4.0 # seconds; covers winner's 3s read timeout.(slow conn. can take 6s)
     DEFAULT_RETRY_AFTER = 5 # seconds, when there is no cooldown to report
 
     # Why no rate could be served, for the controller to turn into a response.
     # code: :rates_unavailable, :upstream_quota_exhausted or :cache_unavailable
     Failure = Data.define(:code, :retry_after)
 
-    # rate_age_ms: age of the table the rate came from (for logs); nil on failure
+    # rate_age_ms: age of the table the rate came from (for logs). nil on failure
     attr_reader :failure, :rate_age_ms
 
     # The controller owns the user-facing message, so errors stays empty;
@@ -90,7 +90,7 @@ module Api::V1
     end
 
     # Age is checked again here, not only when picking a branch: a 4m58s table
-    # plus a 3 s failed refresh would otherwise be served at 5m01s.
+    # plus a 3s failed refresh would otherwise be served at 5m01s.
     # Sets result or failure. table: RateCache::Table or nil
     def serve(table)
       rate = table.rate_for(@period, @hotel, @room) if @cache.servable?(table)

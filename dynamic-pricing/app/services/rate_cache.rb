@@ -46,7 +46,7 @@ class RateCache
     return nil if raw.nil?
 
     data = JSON.parse(raw)
-    unless data.is_a?(Hash) && data["rates"].is_a?(Hash) && data["fetched_at"].is_a?(Numeric)
+    if !data.is_a?(Hash) || !data["rates"].is_a?(Hash) || !data["fetched_at"].is_a?(Numeric)
       Rails.logger.warn({ event: "rate_cache.corrupt_entry" }.to_json)
       return nil
     end
