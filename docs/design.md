@@ -22,3 +22,17 @@ Notes:
 - **Redis down**: Any Redis error at any step gives a 503 with `cache_unavailable`. We never call rate-api without Redis, because without the lock and the cooldown every request could call it and burn the daily quota.
 - **Still ≤ 5 min old?**: when a refresh fails, the old table is checked again before it is served. It might have been 4m58s old when the refresh started and 5m01s old when the refresh failed. In that case the user gets a 503, never a stale rate.
 - **Waiting requests**: Never call rate-api and never try the lock again. They only read the cache every 200 ms for up to 4s.
+
+## Measured upstream behaviour
+
+- I called the local rate-api 1000 times with all 36 combinations in one batch and a 3s timeout with fresh quota.
+- All 1000 calls were charged, timeouts included. Call 1001 got a 429.
+- The slow calls take about 120s in local tests against upstream and do return valid data. Successful calls take under 0.05s. This is why the timeout is 3s in our api.
+
+| Outcome                     | Count | Share |
+| --------------------------- | ----- | ----- |
+| OK (valid rates)            | 727   | 72.7% |
+| Timeout at 3s               | 76    | 7.6%  |
+| HTTP 500                    | 74    | 7.4%  |
+| HTTP 200 with an error body | 62    | 6.2%  |
+| HTTP 200, every rate null   | 61    | 6.1%  |

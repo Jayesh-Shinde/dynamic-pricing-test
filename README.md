@@ -115,7 +115,7 @@ One call fetches all 36 keys and costs one quota unit.
 
 A day has 1440 minutes. If we refresh after 3 minutes, that's at most 1440 / 3 = 480 refreshes/day. It's max 480 because a refresh only happens when a request comes in so if no requests comes in quiet hours then no refresh call to upstream.
 
-Not every call succeeds. I ran two local tests of about 1000 calls each, and both came out around 73% success. So 73 successful refreshes cost about 100 calls, which is 100 / 73 = 1.38 calls per refresh. That gives 480 × 1.38 = 660 attempts/day, under 1000.
+Not every call succeeds. I ran two local tests of about 1000 calls each, and both came out around 73% success (full numbers in [docs/design.md](docs/design.md#measured-upstream-behaviour)). So 73 successful refreshes cost about 100 calls, which is 100 / 73 = 1.38 calls per refresh. That gives 480 × 1.38 = 660 attempts/day, under 1000.
 
 Why 3 minutes and not 5? Refreshing at 3 minutes leaves a 2-minute buffer. If a refresh fails, the cached table is still under 5 minutes old and can still be served while we retry. If we waited until exactly 5 minutes, any failed refresh would mean the user gets an error.
 
@@ -206,7 +206,7 @@ Codes: `invalid_params` (400), `rates_unavailable`, `upstream_quota_exhausted`, 
 - **Fixed catalog**: the 36 combinations are fixed, which is what makes a full table refresh in one call possible. If the catalog grew large, this design would need to change.
 - **Traffic shape**: 10000 requests/day is roughly one every 9s, so refreshing on demand gets more chances inside the 3–5 min window.
 - **Quota reset window**: unknown in production (in dev the container resets on restart). After a 429 I wait 1 h before trying again. This is a guess, set as a default in `start_quota_cooldown`, not an env setting.
-- **Failed calls cost quota**: measured during local test. Timeouts, 500s and error bodies were all charged against the 1000. That is why each refresh makes one attempt only.
+- **Failed calls cost quota**: measured during local test. Timeouts, 500s and error bodies were all charged against the 1000 (see [docs/design.md](docs/design.md#measured-upstream-behaviour)). That is why each refresh makes one attempt only.
 - **Rates are not stable per key**: the same key returns different rates in separate calls. A cached value is one sample from the model, which I took to be acceptable for up to 5 min.
 
 ## Section 6: Known weaknesses and next steps
@@ -241,6 +241,8 @@ Codes: `invalid_params` (400), `rates_unavailable`, `upstream_quota_exhausted`, 
   - The design and its trade-offs: whole-table refresh, Redis, lock + cooldown, 3/5 min windows, fail closed, 503 instead of stale data.
   - Reviewing every code chunk before accepting it, and making every commit.
   - Writing the README myself. Claude formatted the Markdown and reviewed it for accuracy.
+  - Drawing both diagrams in `docs/` (components and request flow).
+  - A final pass over every file: reworded the comments in my own words and switched `unless` to `if` for readability.
 - Claude Code part:
   - Wrote the Ruby in small chunks (one method at a time), explained with Node analogies.
   - Reviewed the design. I accepted 4 changes: serve time age check, real Redis in tests, 200ms polling, integer rates.
