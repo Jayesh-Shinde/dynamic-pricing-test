@@ -1,6 +1,7 @@
 require "test_helper"
 
 class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
+  # Scaffold test, updated: a success returns the rate as an integer.
   test "should get pricing with all parameters" do
     rates = { RateCache.key_for("Summer", "FloatingPointResort", "SingletonRoom") => 15000 }
     mock_result = RateApiClient::Result.new(kind: :ok, rates:, http_status: 200)
@@ -20,6 +21,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # Scaffold test, updated: upstream 500 -> 503 rates_unavailable + Retry-After.
   test "should return error when rate API fails" do
     mock_result = RateApiClient::Result.new(kind: :http_error, rates: nil, http_status: 500)
 
@@ -41,6 +43,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # Full HTTP path for 429: 503 (our token's quota, not the caller's), Retry-After 3600.
   test "returns 503 upstream_quota_exhausted with a 1 hour Retry-After when upstream says 429" do
     mock_result = RateApiClient::Result.new(kind: :quota_exceeded, rates: nil, http_status: 429)
 
@@ -53,6 +56,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
     assert_equal "upstream_quota_exhausted", JSON.parse(@response.body)["code"]
   end
 
+  # Every Redis call raises: 503 cache_unavailable, and the upstream stub is never hit.
   test "returns 503 cache_unavailable when Redis is down, without calling upstream" do
     redis_down = ->(*) { raise Redis::CannotConnectError, "connection refused" }
     must_not_call = ->(_) { raise Minitest::Assertion, "upstream must not be called" }
@@ -68,6 +72,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
     assert_equal "cache_unavailable", JSON.parse(@response.body)["code"]
   end
 
+  # Retry-After is only sent with errors.
   test "a success response has no Retry-After header" do
     rates = { RateCache.key_for("Summer", "FloatingPointResort", "SingletonRoom") => 15000 }
 
@@ -79,6 +84,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
     assert_nil @response.headers["Retry-After"]
   end
 
+  # Scaffold test: no params -> 400 invalid_params.
   test "should return error without any parameters" do
     get api_v1_pricing_url
 
@@ -90,6 +96,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
     assert_equal "invalid_params", json_response["code"]
   end
 
+  # Scaffold test: empty strings count as missing.
   test "should handle empty parameters" do
     get api_v1_pricing_url, params: {
       period: "",
@@ -105,6 +112,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
     assert_equal "invalid_params", json_response["code"]
   end
 
+  # Scaffold test: a value outside the catalog -> 400 naming the field.
   test "should reject invalid period" do
     get api_v1_pricing_url, params: {
       period: "summer-2024",
@@ -120,6 +128,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
     assert_equal "invalid_params", json_response["code"]
   end
 
+  # Scaffold test: a value outside the catalog -> 400 naming the field.
   test "should reject invalid hotel" do
     get api_v1_pricing_url, params: {
       period: "Summer",
@@ -135,6 +144,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
     assert_equal "invalid_params", json_response["code"]
   end
 
+  # Scaffold test: a value outside the catalog -> 400 naming the field.
   test "should reject invalid room" do
     get api_v1_pricing_url, params: {
       period: "Summer",
@@ -152,6 +162,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
 
   VALID_PARAMS = { period: "Summer", hotel: "FloatingPointResort", room: "SingletonRoom" }.freeze
 
+  # One pricing_request JSON line: status 200, no code, and the age of the rate served.
   test "logs one pricing_request line for a served rate" do
     rates = { RateCache.key_for("Summer", "FloatingPointResort", "SingletonRoom") => 15000 }
     ok = RateApiClient::Result.new(kind: :ok, rates:, http_status: 200)
@@ -167,6 +178,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
     assert_kind_of Integer, logs[0]["latency_ms"]
   end
 
+  # A 503 log line carries the error code and no rate age.
   test "logs the error code for a 503" do
     failed = RateApiClient::Result.new(kind: :http_error, rates: nil, http_status: 500)
 
@@ -180,6 +192,7 @@ class Api::V1::PricingControllerTest < ActionDispatch::IntegrationTest
     assert_nil logs[0]["rate_age_ms"]
   end
 
+  # around_action wraps validate_params, so 400s are logged too.
   test "logs invalid params too, although validate_params stops the request" do
     logs = capture_request_logs do
       get api_v1_pricing_url, params: VALID_PARAMS.merge(room: "InvalidRoom")

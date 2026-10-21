@@ -20,6 +20,7 @@ class RateRefresherTest < ActiveSupport::TestCase
     REDIS_POOL.with { |redis| redis.get(RateCache::FAILURES_KEY) }
   end
 
+  # Happy path: table cached and returned. Failure cleared. Lock freed.
   test "success caches the table, returns it, clears the failure count and releases the lock" do
     @cache.record_failure
 
@@ -32,6 +33,7 @@ class RateRefresherTest < ActiveSupport::TestCase
     assert @cache.acquire_lock, "lock should have been released"
   end
 
+  # One batch with all 36 keys = one quota unit per refresh.
   test "requests all 36 combinations in one call" do
     sent = nil
     fake = ->(attributes) { sent = attributes; ok_result }
@@ -41,6 +43,7 @@ class RateRefresherTest < ActiveSupport::TestCase
     assert_equal RateCatalog::ALL_ATTRIBUTES, sent
   end
 
+  # Lock already held -> :busy and no upstream call. quota is never spent.
   test "returns busy without calling upstream when another process holds the lock" do
     @cache.acquire_lock
     must_not_call = ->(_) { flunk "upstream must not be called" }
@@ -50,6 +53,7 @@ class RateRefresherTest < ActiveSupport::TestCase
     assert_equal :busy, outcome.status
   end
 
+  # Timeout: nothing cached, 5s cooldown starts, lock still released.
   test "a failed call caches nothing, starts a failure cooldown and releases the lock" do
     outcome = RateApiClient.stub(:fetch_rates, failed_result(:timeout)) { @refresher.call }
 
@@ -60,6 +64,7 @@ class RateRefresherTest < ActiveSupport::TestCase
     assert @cache.acquire_lock, "lock should have been released"
   end
 
+  # 429 sets the 1hr quota cooldown without counting a failure.
   test "upstream 429 starts the long quota cooldown without counting a failure" do
     outcome = RateApiClient.stub(:fetch_rates, failed_result(:quota_exceeded, 429)) { @refresher.call }
 
@@ -68,6 +73,7 @@ class RateRefresherTest < ActiveSupport::TestCase
     assert_equal 1.hour.to_i, @cache.cooldown_remaining
   end
 
+  # Release is in ensure so a crash cannot leave the lock stuck until its TTL.
   test "the lock is released even if the call raises unexpectedly" do
     boom = ->(_) { raise "unexpected" }
 

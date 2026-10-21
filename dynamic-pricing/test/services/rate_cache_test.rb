@@ -7,10 +7,12 @@ class RateCacheTest < ActiveSupport::TestCase
     @cache = RateCache.new
   end
 
+  # Empty Redis -> a miss (nil), not an error.
   test "read returns nil when nothing is cached" do
     assert_nil @cache.read
   end
 
+  # Round trip: rates and fetched_at survive the JSON stored in Redis.
   test "write then read returns the same table" do
     fetched_at = Time.current.to_f
 
@@ -36,6 +38,7 @@ class RateCacheTest < ActiveSupport::TestCase
     assert_nil @cache.read
   end
 
+  # Data already 60s old gets 240s of Redis TTL, so Redis also drops it at the 5 min.
   test "Redis expiry is set to the remaining serve time" do
     @cache.write(rates: RATES, fetched_at: Time.current.to_f - 60)
 
@@ -43,12 +46,14 @@ class RateCacheTest < ActiveSupport::TestCase
     assert_in_delta 240_000, pttl_ms, 1_000
   end
 
+  # Data older than 5 min is never stored.
   test "write stores nothing when the data is already too old" do
     assert_not @cache.write(rates: RATES, fetched_at: Time.current.to_f - 301)
 
     assert_nil REDIS_POOL.with { |redis| redis.get(RateCache::TABLE_KEY) }
   end
 
+  # Bad result in Redis counts as empty, so the next request refreshes.
   test "a corrupt entry reads as a miss instead of raising" do
     [
       "not json",
@@ -61,6 +66,7 @@ class RateCacheTest < ActiveSupport::TestCase
     end
   end
 
+  # SET NX: the second acquire gets nil, so only one refresher at a time.
   test "only one caller gets the lock at a time" do
     token = @cache.acquire_lock
 
@@ -68,6 +74,7 @@ class RateCacheTest < ActiveSupport::TestCase
     assert_nil @cache.acquire_lock
   end
 
+  # Release frees the lock for the next refresh.
   test "the lock can be taken again after its owner releases it" do
     token = @cache.acquire_lock
 
@@ -83,7 +90,7 @@ class RateCacheTest < ActiveSupport::TestCase
     assert_nil @cache.acquire_lock
   end
 
-  # Real wait, because the expiry lives in Redis and travel_to cannot move Redis's clock.
+  # test the lock expires by itself.
   test "the lock expires by itself" do
     old_token = @cache.acquire_lock(ttl: 0.1.seconds)
     sleep 0.15
@@ -94,10 +101,12 @@ class RateCacheTest < ActiveSupport::TestCase
     assert_nil @cache.acquire_lock, "the old holder must not have released the new lock"
   end
 
+  # Clean Redis -> no cooldown, so the first refresh is allowed.
   test "there is no cooldown at the start" do
     assert_nil @cache.cooldown_remaining
   end
 
+  # Backoff: 1st failure -> 5s cooldown, 2nd -> 10s.
   test "each consecutive failure lengthens the cooldown by 5 seconds" do
     assert_equal 5, @cache.record_failure
     assert_equal 5, @cache.cooldown_remaining
@@ -106,6 +115,7 @@ class RateCacheTest < ActiveSupport::TestCase
     assert_equal 10, @cache.cooldown_remaining
   end
 
+  # Many failures still give at most 120s, so a full-day outage costs ~730 calls.
   test "the cooldown is capped at 2 minutes" do
     30.times { @cache.record_failure }
 
@@ -113,6 +123,7 @@ class RateCacheTest < ActiveSupport::TestCase
     assert_equal 120, @cache.cooldown_remaining
   end
 
+  # After a success, the next failure starts again at 5s.
   test "a success resets the failure count" do
     3.times { @cache.record_failure }
     @cache.record_success
@@ -120,6 +131,7 @@ class RateCacheTest < ActiveSupport::TestCase
     assert_equal 5, @cache.record_failure
   end
 
+  # A good refresh clears any running cooldown, so nobody waits for no reason.
   test "a success ends a running cooldown" do
     @cache.record_failure
     @cache.record_success
@@ -128,6 +140,7 @@ class RateCacheTest < ActiveSupport::TestCase
     assert_nil @cache.cooldown_reason
   end
 
+  # The counter has a 10 min TTL, so an old failure streak heals itself.
   test "the failure counter expires by itself" do
     @cache.record_failure
 
@@ -135,6 +148,7 @@ class RateCacheTest < ActiveSupport::TestCase
     assert_in_delta 600, ttl, 1
   end
 
+  # Quota cooldown is 1 h (reset window unknown), not the short failure backoff.
   test "an upstream 429 starts a 1 hour cooldown" do
     @cache.start_quota_cooldown
 

@@ -8,6 +8,7 @@ class RateApiClientTest < ActiveSupport::TestCase
     { rates: [SUMMER.merge(rate: summer_rate), WINTER.merge(rate: winter_rate)] }.to_json
   end
 
+  # Upstream sends 56900 or "56900" we always return an Integer.
   test "rates sent as numbers or numeric strings both become integers" do
     [[56900, 35900], ["56900", "35900"]].each do |summer_rate, winter_rate|
       result = RateApiClient.parse_rates(body_with_rates(summer_rate, winter_rate), [SUMMER, WINTER])
@@ -40,18 +41,21 @@ class RateApiClientTest < ActiveSupport::TestCase
     end
   end
 
+  # Asked for 2 keys, got 1 -> whole response rejected, so a partial table is never cached.
   test "a response missing a requested key fails" do
     body = { rates: [SUMMER.merge(rate: 56900)] }.to_json
 
     assert_equal :invalid_rates, RateApiClient.parse_rates(body, [SUMMER, WINTER]).kind
   end
 
+  # Extra keys from upstream are ignored only the requested keys are kept.
   test "keys we did not ask for are dropped" do
     result = RateApiClient.parse_rates(body_with_rates(56900, 35900), [SUMMER])
 
     assert_equal({ "Summer|FloatingPointResort|SingletonRoom" => 56900 }, result.rates)
   end
 
+  # HTML, a JSON array, or non-object items -> a failure kind, never an exception.
   test "a body that is not JSON, or JSON of the wrong shape, fails without raising" do
     assert_equal :invalid_json, RateApiClient.parse_rates("<html>oops</html>", [SUMMER]).kind
     assert_equal :error_body, RateApiClient.parse_rates("[1, 2]", [SUMMER]).kind
@@ -62,6 +66,7 @@ class RateApiClientTest < ActiveSupport::TestCase
 
   FakeResponse = Struct.new(:code, :body)
 
+  # Checks the request (path + all attributes in one body) and that a 200 is parsed.
   test "fetch_rates sends all attributes in one call and parses a 200" do
     sent = nil
     respond = ->(path, body:) { sent = [path, JSON.parse(body)]; FakeResponse.new(200, body_with_rates(56900, "35900")) }
@@ -73,6 +78,7 @@ class RateApiClientTest < ActiveSupport::TestCase
     assert_equal 35900, result.rates["Winter|GitawayHotel|BooleanTwin"]
   end
 
+  # 429 -> quota, 400 -> our bug, other codes -> http_error; never any rates.
   test "fetch_rates maps upstream HTTP errors to failure kinds" do
     { 429 => :quota_exceeded, 400 => :bad_request, 500 => :http_error, 503 => :http_error }.each do |code, kind|
       result = RateApiClient.stub(:post, FakeResponse.new(code, { error: "x" }.to_json)) do
@@ -85,6 +91,7 @@ class RateApiClientTest < ActiveSupport::TestCase
     end
   end
 
+  # Network exceptions become failure kinds, so callers never have to rescue them.
   test "fetch_rates turns timeouts and network errors into failures instead of raising" do
     {
       Net::OpenTimeout => :timeout,
@@ -100,6 +107,7 @@ class RateApiClientTest < ActiveSupport::TestCase
     end
   end
 
+  # Guards the config: connect and read are each capped at 3s.
   test "open and read timeouts are 3 seconds" do
     assert_equal 3.0, RateApiClient.default_options[:open_timeout]
     assert_equal 3.0, RateApiClient.default_options[:read_timeout]
